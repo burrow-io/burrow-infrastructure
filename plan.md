@@ -20,11 +20,12 @@ modules/api-backend/:
 
 
 
+Key Components for Your Pipeline:
 
-
-
-
-
+modules/api-backend/:
+- ECS service for your current ragline API
+- ALB, target groups, security groups
+- Auto-scaling policies
 
 
 
