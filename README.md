@@ -5,6 +5,6 @@ Prerequisite (input variables)
 start with ALB today! 
 
 ragline-infrastructure/
-├── management-api-backend/ # ECS service for your ragline API + Dynamo, security groups
+├── management-api-backend/ # ECS service for ragline management API + Dynamo, security groups
 ├── ingestion-document-processing/ # ECS task + S3 + EventBridge + IAM, security groups
 └── README.md
