@@ -4,12 +4,6 @@
 #  - figure out what account to use and S3 backend (store state in S3 bucket that we make rather than locally)
 # Together: make alb, listener, target group
 # - be able to: terraform apply, then terraform destroy
-
-provider "aws" {
-  region = "us-east-1"
-}
-
-
 resource "aws_lb" "test-lb-tf" {
   name               = "test-lb-tf"
   internal           = false
@@ -192,6 +186,7 @@ resource "aws_ecs_task_definition" "service" {
         {
           containerPort = 3000
           protocol      = "tcp"
+          appProtocol   = "http"
         }
       ]
       environment = [
@@ -213,7 +208,7 @@ resource "aws_ecs_task_definition" "service" {
         },
         {
           name  = "DYNAMODB_TABLE_USERS"
-          value = "users-terraform"
+          value = "users"
         } 
       ]
       secrets = [
@@ -337,27 +332,21 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Additional policy for Secrets Manager access
-resource "aws_iam_role_policy" "ecs_execution_secrets_policy" {
-  name = "ecs-execution-secrets-policy"
-  role = aws_iam_role.ecs_execution_role.id
+# Attach AWS managed policy for Secrets Manager read access
+resource "aws_iam_role_policy_attachment" "ecs_execution_secrets_policy" {
+  role       = aws_iam_role.ecs_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+}
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue"
-        ]
-        Resource = [
-          aws_secretsmanager_secret.admin-password.arn,
-          aws_secretsmanager_secret.jwt-secret.arn,
-          aws_secretsmanager_secret.ingestion-api-token.arn
-        ]
-      }
-    ]
-  })
+
+# CloudWatch Log Group for ECS tasks
+resource "aws_cloudwatch_log_group" "ecs_service" {
+  name              = "/ecs/service"
+  retention_in_days = 7
+
+  tags = {
+    Name = "ecs-service-logs"
+  }
 }
 
 # Random passwords
@@ -426,16 +415,12 @@ resource "aws_secretsmanager_secret_version" "ingestion-api-token" {
 }
 
 
-resource "aws_ecs_service" "mananament-api-service" {
-  name            = "mananament-api-service"
+resource "aws_ecs_service" "management-api-service" {
+  name            = "management-api-service"
   cluster         = aws_ecs_cluster.management-api-cluster.id
   task_definition = aws_ecs_task_definition.service.arn
   desired_count   = 1
- 
-  ordered_placement_strategy {
-    type  = "binpack"
-    field = "cpu"
-  }
+  launch_type     = "FARGATE"
 
   load_balancer {
     target_group_arn = aws_lb_target_group.management_api.arn
