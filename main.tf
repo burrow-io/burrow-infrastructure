@@ -181,7 +181,7 @@ resource "aws_ecs_task_definition" "service" {
   container_definitions = jsonencode([
     {
       name  = "management-api"
-      image = "908860991626.dkr.ecr.us-east-1.amazonaws.com/ragline-backend:latest" 
+      image = "908860991626.dkr.ecr.us-east-1.amazonaws.com/ragline-backend:latest"
       portMappings = [
         {
           containerPort = 3000
@@ -209,7 +209,7 @@ resource "aws_ecs_task_definition" "service" {
         {
           name  = "DYNAMODB_TABLE_USERS"
           value = "users"
-        } 
+        }
       ]
       secrets = [
         {
@@ -243,8 +243,8 @@ resource "aws_ecs_task_definition" "service" {
     cpu_architecture        = "ARM64"
   }
 
-  task_role_arn            = aws_iam_role.ecs_task_role.arn
-  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn      = aws_iam_role.ecs_task_role.arn
+  execution_role_arn = aws_iam_role.ecs_execution_role.arn
 }
 
 # IAM Role for ECS Task (used by the application)
@@ -505,7 +505,7 @@ resource "aws_ecs_service" "management-api-service" {
     subnets          = [var.private_subnet_1_id, var.private_subnet_2_id]
     assign_public_ip = false
     security_groups  = [aws_security_group.ecs_service.id]
-  } 
+  }
 }
 
 resource "aws_s3_bucket" "bucket" {
@@ -523,9 +523,9 @@ resource "random_id" "s3-bucket-suffix" {
 
 
 resource "aws_cloudwatch_event_rule" "s3_object_created_rule" {
-  name          = "s3-object-created-rule"
-  description   = "Rule to capture S3 object creation events"
-  event_bus_name = "default" 
+  name           = "s3-object-created-rule"
+  description    = "Rule to capture S3 object creation events"
+  event_bus_name = "default"
 
   event_pattern = jsonencode({
     source      = ["aws.s3"]
@@ -620,8 +620,8 @@ resource "aws_iam_role_policy" "eventbridge_ecs_policy" {
         Resource = ["*"]
       },
       {
-        Effect = "Allow"
-        Action = "iam:PassRole"
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
         Resource = ["*"]
         Condition = {
           StringLike = {
