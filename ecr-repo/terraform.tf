@@ -3,7 +3,7 @@ terraform {
 
   backend "s3" {
     bucket  = "burrow-terraform-state-us-east-1-12345"
-    key     = "burrow/terraform.tfstate"
+    key     = "burrow/terraform-ecr.tfstate"
     region  = "us-east-1"
     encrypt = true
   }
