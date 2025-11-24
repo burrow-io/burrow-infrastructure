@@ -557,7 +557,7 @@ resource "aws_cloudwatch_event_target" "ecs_task_target" {
       subnets          = [var.private_subnet_1_id, var.private_subnet_2_id]
       assign_public_ip = false
       #!!!!ZACH Changed this security group
-      security_groups  = [aws_security_group.ingestion_task_sg.id]
+      security_groups = [aws_security_group.ingestion_task_sg.id]
     }
   }
 
@@ -662,7 +662,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
       environment = [
         {
           name  = "DB_HOST"
-          value = aws_rds_cluster.tf_aurora_pg.endpoint  
+          value = aws_rds_cluster.tf_aurora_pg.endpoint
         },
         {
           name  = "DB_PORT"
@@ -675,6 +675,10 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
         {
           name  = "DB_USER"
           value = "burrow_admin"
+        },
+        {
+          name  = "ALB_BASE_URL"
+          value = "http://${aws_lb.test-lb-tf.dns_name}"
         }
       ]
 
@@ -776,8 +780,8 @@ resource "random_password" "tf_aurora_master_password" {
 
 #!!!!ZACH Created Secret for Aurora password
 resource "aws_secretsmanager_secret" "aurora_db_password" {
-  name        = "ragline/aurora-db-password"
-  description = "Aurora DB password for burrowdb"
+  name                    = "ragline/aurora-db-password"
+  description             = "Aurora DB password for burrowdb"
   recovery_window_in_days = 0
 }
 
@@ -790,12 +794,12 @@ resource "aws_secretsmanager_secret_version" "aurora_db_password" {
 #!!!!ZACH ADDED Aurors Serverless v2 cluster
 resource "aws_rds_cluster" "tf_aurora_pg" {
   cluster_identifier = "burrow-aurora-tf"
-  engine         = "aurora-postgresql"
-  engine_version = "17.4"
-  engine_mode    = "provisioned" 
-  database_name   = "burrowdb"
-  master_username = "burrow_admin"
-  master_password = random_password.tf_aurora_master_password.result
+  engine             = "aurora-postgresql"
+  engine_version     = "17.4"
+  engine_mode        = "provisioned"
+  database_name      = "burrowdb"
+  master_username    = "burrow_admin"
+  master_password    = random_password.tf_aurora_master_password.result
   storage_encrypted  = true
 
   db_subnet_group_name   = aws_db_subnet_group.tf_aurora_subnets.name
@@ -823,8 +827,8 @@ resource "aws_rds_cluster_instance" "tf_aurora_pg_instance" {
 
   publicly_accessible = false
 
-  monitoring_interval          = 0    
-  performance_insights_enabled = false 
+  monitoring_interval          = 0
+  performance_insights_enabled = false
 
   tags = {
     Name = "burrow-aurora-tf-1"
