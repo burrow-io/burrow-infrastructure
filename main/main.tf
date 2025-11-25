@@ -834,3 +834,179 @@ resource "aws_rds_cluster_instance" "tf_aurora_pg_instance" {
     Name = "burrow-aurora-tf-1"
   }
 }
+
+#------------- ZACH Additions For Query-Api --------------------------
+
+#ZACH Created a target group for Query-Api
+resource "aws_lb_target_group" "query_api" {
+  name        = "query-api-tg-tf"
+  port        = 8000
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    timeout             = 5
+    interval            = 30
+    path                = "/query-service/health"
+    protocol            = "HTTP"
+    matcher             = "200"
+  }
+
+  tags = {
+    Name = "query-api-tg"
+  }
+}
+
+#ZACH Added listener rule to existing Listener on ALB
+resource "aws_lb_listener_rule" "query_api_rule" {
+  listener_arn = aws_lb_listener.front_end.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.query_api.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/query-service/*"]
+    }
+  }
+}
+
+#ZACH Added Security Group for query ecs service
+resource "aws_security_group" "query_service" {
+  name        = "query-service-sg"
+  description = "Security group for query ECS service"
+  vpc_id      = var.vpc_id
+
+  tags = {
+    Name = "query-service-sg"
+  }
+}
+
+#ZACH Added inbound rule for query ecs servce Security Group
+resource "aws_vpc_security_group_ingress_rule" "query_from_alb" {
+  security_group_id            = aws_security_group.query_service.id
+  referenced_security_group_id = aws_security_group.lb_sg.id
+  from_port                    = 8000
+  to_port                      = 8000
+  ip_protocol                  = "tcp"
+}
+
+#ZACH Added outbound rule for query ecs servce Security Group
+resource "aws_vpc_security_group_egress_rule" "query_egress" {
+  security_group_id = aws_security_group.query_service.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+#ZACH Added I just copied the cloudwatch group that was added for management
+resource "aws_cloudwatch_log_group" "query_api" {
+  name              = "/ecs/query-api-tf"
+  retention_in_days = 7
+
+  tags = {
+    Name = "query-api-logs-tf"
+  }
+}
+
+#ZACH ADDED Task definition for Query-Api
+resource "aws_ecs_task_definition" "query_api" {
+  family                   = "query-api-tf"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 1024
+  memory                   = 3072
+
+  container_definitions = jsonencode([
+    {
+      name      = "query-api"
+      image     = "908860991626.dkr.ecr.us-east-1.amazonaws.com/query-api-test"
+      essential = true
+      portMappings = [
+        {
+          containerPort = 8000
+          protocol      = "tcp"
+          appProtocol   = "http"
+        }
+      ]
+      environment = [
+        {
+          name  = "DB_HOST"
+          value = aws_rds_cluster.tf_aurora_pg.reader_endpoint
+        },
+        {
+          name  = "DB_PORT"
+          value = "5432"
+        },
+        {
+          name  = "DB_NAME"
+          value = "burrowdb"
+        },
+        {
+          name  = "DB_USER"
+          value = "burrow_admin"
+        },
+      ]
+      secrets = [
+        {
+          name      = "DB_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.aurora_db_password.arn
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/query-api-tf"
+          "awslogs-create-group"  = "true"
+          "awslogs-region"        = "us-east-1"
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+    }
+  ])
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
+  # Right now I'm using the task role for ingestion code still 
+  task_role_arn      = aws_iam_role.ingestion_task_role.arn
+  execution_role_arn = aws_iam_role.ecs_execution_role.arn
+}
+
+#ZACH Added Ecs Service for Query-Api
+resource "aws_ecs_service" "query_api_service" {
+  name            = "query-api-tf"
+  cluster         = aws_ecs_cluster.management-api-cluster.id
+  task_definition = aws_ecs_task_definition.query_api.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.query_api.arn
+    container_name   = "query-api"
+    container_port   = 8000
+  }
+
+  network_configuration {
+    subnets          = [var.private_subnet_1_id, var.private_subnet_2_id]
+    assign_public_ip = false
+    security_groups  = [aws_security_group.query_service.id]
+  }
+}
+
+#ZACH Added extra inbound fule for Aurora Security Group
+resource "aws_vpc_security_group_ingress_rule" "tf_aurora_from_query" {
+  security_group_id            = aws_security_group.tf_aurora_sg.id
+  referenced_security_group_id = aws_security_group.query_service.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+}
