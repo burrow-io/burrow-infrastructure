@@ -1,5 +1,12 @@
-resource "aws_lb" "burrow" {
-  name               = "burrow"
+# One of us: make a brand new VPC manually (to meet pre-req)
+# - make sure it has 2 public subnets & 2 private subnets
+# The other: figure out how to configure terraform
+#  - figure out what account to use and S3 backend (store state in S3 bucket that we make rather than locally)
+# Together: make alb, listener, target group
+# - be able to: terraform apply, then terraform destroy
+
+resource "aws_lb" "test-lb-tf" {
+  name               = "test-lb-tf"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.lb_sg.id]
@@ -10,6 +17,7 @@ resource "aws_lb" "burrow" {
   }
 }
 
+# Security group for the Application Load Balancer
 resource "aws_security_group" "lb_sg" {
   name        = "alb-security-group"
   description = "Security group for Application Load Balancer"
@@ -20,6 +28,8 @@ resource "aws_security_group" "lb_sg" {
   }
 }
 
+
+# Allow HTTP traffic from internet
 resource "aws_vpc_security_group_ingress_rule" "lb_http" {
   security_group_id = aws_security_group.lb_sg.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -28,12 +38,16 @@ resource "aws_vpc_security_group_ingress_rule" "lb_http" {
   to_port           = 80
 }
 
+
+
+# Allow all outbound traffic (ALB needs to forward traffic to targets)
 resource "aws_vpc_security_group_egress_rule" "lb_egress" {
   security_group_id = aws_security_group.lb_sg.id
   cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
+  ip_protocol       = "-1" # -1 means all protocols
 }
 
+# Security group for ECS service
 resource "aws_security_group" "ecs_service" {
   name        = "ecs-service-sg"
   description = "Security group for ECS service"
@@ -44,6 +58,7 @@ resource "aws_security_group" "ecs_service" {
   }
 }
 
+# Allow inbound traffic from ALB on port 3000
 resource "aws_vpc_security_group_ingress_rule" "ecs_from_alb" {
   security_group_id            = aws_security_group.ecs_service.id
   referenced_security_group_id = aws_security_group.lb_sg.id
@@ -52,12 +67,14 @@ resource "aws_vpc_security_group_ingress_rule" "ecs_from_alb" {
   to_port                      = 3000
 }
 
+# Allow all outbound traffic from ECS tasks
 resource "aws_vpc_security_group_egress_rule" "ecs_egress" {
   security_group_id = aws_security_group.ecs_service.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
 
+# Target group for IP addresses
 resource "aws_lb_target_group" "management_api" {
   name        = "alb-target-group"
   port        = 3000
@@ -81,8 +98,9 @@ resource "aws_lb_target_group" "management_api" {
   }
 }
 
+# HTTP Listener
 resource "aws_lb_listener" "front_end" {
-  load_balancer_arn = aws_lb.burrow.arn
+  load_balancer_arn = aws_lb.test-lb-tf.arn
   port              = "80"
   protocol          = "HTTP"
 
@@ -155,8 +173,8 @@ resource "aws_ecs_cluster" "management-api-cluster" {
 }
 
 
-resource "aws_ecs_task_definition" "management-api" {
-  family                   = "management-api"
+resource "aws_ecs_task_definition" "service" {
+  family                   = "service"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = 1024
@@ -164,7 +182,7 @@ resource "aws_ecs_task_definition" "management-api" {
   container_definitions = jsonencode([
     {
       name  = "management-api"
-      image = "908860991626.dkr.ecr.us-east-1.amazonaws.com/ragline-backend:latest"
+      image = "docker.io/burrowai/management-api:main"
       portMappings = [
         {
           containerPort = 3000
@@ -179,7 +197,7 @@ resource "aws_ecs_task_definition" "management-api" {
         },
         {
           name  = "AWS_REGION"
-          value = "us-east-1"
+          value = "us-east-1" # from user  
         },
         {
           name  = "PORT"
@@ -212,7 +230,7 @@ resource "aws_ecs_task_definition" "management-api" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = "/ecs/management-api"
+          "awslogs-group"         = "/ecs/service"
           "awslogs-region"        = "us-east-1"
           "awslogs-stream-prefix" = "ecs"
         }
@@ -230,6 +248,7 @@ resource "aws_ecs_task_definition" "management-api" {
   execution_role_arn = aws_iam_role.ecs_execution_role.arn
 }
 
+# IAM Role for ECS Task (used by the application)
 resource "aws_iam_role" "ecs_task_role" {
   name = "ecs-task-role"
 
@@ -251,6 +270,7 @@ resource "aws_iam_role" "ecs_task_role" {
   }
 }
 
+# IAM Policy for ECS Task (S3 and DynamoDB permissions)
 resource "aws_iam_role_policy" "ecs_task_policy" {
   name = "ecs-task-policy"
   role = aws_iam_role.ecs_task_role.id
@@ -284,6 +304,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
   })
 }
 
+# IAM Role for Ingestion ECS Task
 resource "aws_iam_role" "ingestion_task_role" {
   name = "ingestion-task-role"
 
@@ -305,6 +326,7 @@ resource "aws_iam_role" "ingestion_task_role" {
   }
 }
 
+# IAM Policy for Ingestion ECS Task
 resource "aws_iam_role_policy" "ingestion_task_policy" {
   name = "ingestion-task-policy"
   role = aws_iam_role.ingestion_task_role.id
@@ -346,6 +368,7 @@ resource "aws_iam_role_policy" "ingestion_task_policy" {
   })
 }
 
+# IAM Role for ECS Task Execution (used by ECS to pull images, write logs, retrieve secrets)
 resource "aws_iam_role" "ecs_execution_role" {
   name = "ecs-execution-role"
 
@@ -367,18 +390,22 @@ resource "aws_iam_role" "ecs_execution_role" {
   }
 }
 
+# Attach AWS managed policy for ECS task execution
 resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
   role       = aws_iam_role.ecs_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Attach AWS managed policy for Secrets Manager read access
 resource "aws_iam_role_policy_attachment" "ecs_execution_secrets_policy" {
   role       = aws_iam_role.ecs_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
 }
 
+
+# CloudWatch Log Group for ECS tasks
 resource "aws_cloudwatch_log_group" "ecs_service" {
-  name              = "/ecs/management-api"
+  name              = "/ecs/service"
   retention_in_days = 7
 
   tags = {
@@ -386,6 +413,7 @@ resource "aws_cloudwatch_log_group" "ecs_service" {
   }
 }
 
+# CloudWatch Log Group for ingestion tasks
 resource "aws_cloudwatch_log_group" "ingestion_terraform" {
   name              = "/ecs/ingestion-terraform"
   retention_in_days = 7
@@ -395,6 +423,7 @@ resource "aws_cloudwatch_log_group" "ingestion_terraform" {
   }
 }
 
+# Random passwords
 resource "random_password" "admin-password" {
   length           = 16
   special          = true
@@ -413,10 +442,11 @@ resource "random_password" "ingestion-api-token" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
+# Store passwords in Secrets Manager
 resource "aws_secretsmanager_secret" "admin-password" {
   name                    = "ragline/admin-password"
   description             = "Admin password for ragline application"
-  recovery_window_in_days = 0
+  recovery_window_in_days = 0 # Set to 0 for immediate deletion, or 7-30 for recovery window
 
   tags = {
     Name = "ragline-admin-password"
@@ -462,7 +492,7 @@ resource "aws_secretsmanager_secret_version" "ingestion-api-token" {
 resource "aws_ecs_service" "management-api-service" {
   name            = "management-api-service"
   cluster         = aws_ecs_cluster.management-api-cluster.id
-  task_definition = aws_ecs_task_definition.management-api.arn
+  task_definition = aws_ecs_task_definition.service.arn
   desired_count   = 1
   launch_type     = "FARGATE"
 
@@ -510,6 +540,7 @@ resource "aws_cloudwatch_event_rule" "s3_object_created_rule" {
   })
 }
 
+#!!!!ZACH Updated this(I removed the ecs service sg and added ingestion_task_sg)
 resource "aws_cloudwatch_event_target" "ecs_task_target" {
   rule      = aws_cloudwatch_event_rule.s3_object_created_rule.name
   target_id = "TriggerECSTask"
@@ -525,6 +556,7 @@ resource "aws_cloudwatch_event_target" "ecs_task_target" {
     network_configuration {
       subnets          = [var.private_subnet_1_id, var.private_subnet_2_id]
       assign_public_ip = false
+      #!!!!ZACH Changed this security group
       security_groups = [aws_security_group.ingestion_task_sg.id]
     }
   }
@@ -605,6 +637,7 @@ resource "aws_iam_role_policy" "eventbridge_ecs_policy" {
   })
 }
 
+#!!!!ZACH added secrets for api_token and aurora
 resource "aws_ecs_task_definition" "ingestion-terraform" {
   family                   = "ingestion-terraform"
   requires_compatibilities = ["FARGATE"]
@@ -615,7 +648,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "908860991626.dkr.ecr.us-east-1.amazonaws.com/ingest-opensearch:latest"
+      image     = "docker.io/burrowai/ingestion-task:main"
       essential = true
       portMappings = [
         {
@@ -625,6 +658,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
         }
       ]
 
+      #!!!!ZACH ADDED environment variables
       environment = [
         {
           name  = "DB_HOST"
@@ -644,10 +678,11 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
         },
         {
           name  = "ALB_BASE_URL"
-          value = "http://${aws_lb.burrow.dns_name}"
+          value = "http://${aws_lb.test-lb-tf.dns_name}"
         }
       ]
 
+      #!!!!ZACH ADDED secret variable
       secrets = [
         {
           name      = "DB_PASSWORD"
@@ -680,6 +715,8 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   execution_role_arn = aws_iam_role.ecs_execution_role.arn
 }
 
+
+#!!!!!ZACH ADDED Security group for ingestion ECS tasks
 resource "aws_security_group" "ingestion_task_sg" {
   name        = "tf-ingestion-task-sg"
   description = "Security group for ingestion ECS tasks"
@@ -690,12 +727,14 @@ resource "aws_security_group" "ingestion_task_sg" {
   }
 }
 
+#!!!!ZACH ADDED Outbound rule for ingestion ECS Security group
 resource "aws_vpc_security_group_egress_rule" "ingestion_task_egress" {
   security_group_id = aws_security_group.ingestion_task_sg.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
 
+#!!!!!ZACH ADDED Subnet group for Aurora
 resource "aws_db_subnet_group" "tf_aurora_subnets" {
   name       = "tf-aurora-private-subnets"
   subnet_ids = [var.private_subnet_1_id, var.private_subnet_2_id]
@@ -705,6 +744,7 @@ resource "aws_db_subnet_group" "tf_aurora_subnets" {
   }
 }
 
+#!!!!!ZACH ADDED Security group for Aurora
 resource "aws_security_group" "tf_aurora_sg" {
   name        = "tf-aurora-pg-sg"
   description = "Security group for Aurora PostgreSQL"
@@ -715,6 +755,7 @@ resource "aws_security_group" "tf_aurora_sg" {
   }
 }
 
+#!!!!ZACH ADDED Inbound rule for Aurora Security group
 resource "aws_vpc_security_group_ingress_rule" "tf_aurora_from_ingestion" {
   security_group_id            = aws_security_group.tf_aurora_sg.id
   referenced_security_group_id = aws_security_group.ingestion_task_sg.id
@@ -723,29 +764,34 @@ resource "aws_vpc_security_group_ingress_rule" "tf_aurora_from_ingestion" {
   ip_protocol                  = "tcp"
 }
 
+#!!!!ZACH ADDED Outbound rule for Aurora Security group
 resource "aws_vpc_security_group_egress_rule" "tf_aurora_egress" {
   security_group_id = aws_security_group.tf_aurora_sg.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
 
+#!!!!ZACH ADDED Master password for Aurora
 resource "random_password" "tf_aurora_master_password" {
   length           = 20
   special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
+#!!!!ZACH Created Secret for Aurora password
 resource "aws_secretsmanager_secret" "aurora_db_password" {
   name                    = "ragline/aurora-db-password"
   description             = "Aurora DB password for burrowdb"
   recovery_window_in_days = 0
 }
 
+#!!!!ZACH Stored Aurora password in Secret Manager
 resource "aws_secretsmanager_secret_version" "aurora_db_password" {
   secret_id     = aws_secretsmanager_secret.aurora_db_password.id
   secret_string = random_password.tf_aurora_master_password.result
 }
 
+#!!!!ZACH ADDED Aurors Serverless v2 cluster
 resource "aws_rds_cluster" "tf_aurora_pg" {
   cluster_identifier = "burrow-aurora-tf"
   engine             = "aurora-postgresql"
@@ -755,7 +801,6 @@ resource "aws_rds_cluster" "tf_aurora_pg" {
   master_username    = "burrow_admin"
   master_password    = random_password.tf_aurora_master_password.result
   storage_encrypted  = true
-  skip_final_snapshot= true
 
   db_subnet_group_name   = aws_db_subnet_group.tf_aurora_subnets.name
   vpc_security_group_ids = [aws_security_group.tf_aurora_sg.id]
@@ -771,6 +816,7 @@ resource "aws_rds_cluster" "tf_aurora_pg" {
   }
 }
 
+#!!!!ZACH ADDED Aurora instance
 resource "aws_rds_cluster_instance" "tf_aurora_pg_instance" {
   identifier         = "burrow-aurora-tf-1"
   cluster_identifier = aws_rds_cluster.tf_aurora_pg.id
@@ -789,6 +835,9 @@ resource "aws_rds_cluster_instance" "tf_aurora_pg_instance" {
   }
 }
 
+#------------- ZACH Additions For Query-Api --------------------------
+
+#ZACH Created a target group for Query-Api
 resource "aws_lb_target_group" "query_api" {
   name        = "query-api-tg-tf"
   port        = 8000
@@ -812,6 +861,7 @@ resource "aws_lb_target_group" "query_api" {
   }
 }
 
+#ZACH Added listener rule to existing Listener on ALB
 resource "aws_lb_listener_rule" "query_api_rule" {
   listener_arn = aws_lb_listener.front_end.arn
   priority     = 10
@@ -828,6 +878,7 @@ resource "aws_lb_listener_rule" "query_api_rule" {
   }
 }
 
+#ZACH Added Security Group for query ecs service
 resource "aws_security_group" "query_service" {
   name        = "query-service-sg"
   description = "Security group for query ECS service"
@@ -838,6 +889,7 @@ resource "aws_security_group" "query_service" {
   }
 }
 
+#ZACH Added inbound rule for query ecs servce Security Group
 resource "aws_vpc_security_group_ingress_rule" "query_from_alb" {
   security_group_id            = aws_security_group.query_service.id
   referenced_security_group_id = aws_security_group.lb_sg.id
@@ -846,12 +898,14 @@ resource "aws_vpc_security_group_ingress_rule" "query_from_alb" {
   ip_protocol                  = "tcp"
 }
 
+#ZACH Added outbound rule for query ecs servce Security Group
 resource "aws_vpc_security_group_egress_rule" "query_egress" {
   security_group_id = aws_security_group.query_service.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
 
+#ZACH Added I just copied the cloudwatch group that was added for management
 resource "aws_cloudwatch_log_group" "query_api" {
   name              = "/ecs/query-api-tf"
   retention_in_days = 7
@@ -861,6 +915,7 @@ resource "aws_cloudwatch_log_group" "query_api" {
   }
 }
 
+#ZACH ADDED Task definition for Query-Api
 resource "aws_ecs_task_definition" "query_api" {
   family                   = "query-api-tf"
   requires_compatibilities = ["FARGATE"]
@@ -871,7 +926,7 @@ resource "aws_ecs_task_definition" "query_api" {
   container_definitions = jsonencode([
     {
       name      = "query-api"
-      image     = "908860991626.dkr.ecr.us-east-1.amazonaws.com/query-api-test"
+      image     = "docker.io/burrowai/query-api:main"
       essential = true
       portMappings = [
         {
@@ -921,10 +976,12 @@ resource "aws_ecs_task_definition" "query_api" {
     cpu_architecture        = "ARM64"
   }
 
+  # Right now I'm using the task role for ingestion code still 
   task_role_arn      = aws_iam_role.ingestion_task_role.arn
   execution_role_arn = aws_iam_role.ecs_execution_role.arn
 }
 
+#ZACH Added Ecs Service for Query-Api
 resource "aws_ecs_service" "query_api_service" {
   name            = "query-api-tf"
   cluster         = aws_ecs_cluster.management-api-cluster.id
@@ -945,6 +1002,7 @@ resource "aws_ecs_service" "query_api_service" {
   }
 }
 
+#ZACH Added extra inbound fule for Aurora Security Group
 resource "aws_vpc_security_group_ingress_rule" "tf_aurora_from_query" {
   security_group_id            = aws_security_group.tf_aurora_sg.id
   referenced_security_group_id = aws_security_group.query_service.id
