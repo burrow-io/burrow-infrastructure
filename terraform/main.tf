@@ -525,7 +525,7 @@ resource "aws_cloudwatch_event_target" "ecs_task_target" {
     network_configuration {
       subnets          = [var.private_subnet_1_id, var.private_subnet_2_id]
       assign_public_ip = false
-      security_groups = [aws_security_group.ingestion_task_sg.id]
+      security_groups  = [aws_security_group.ingestion_task_sg.id]
     }
   }
 
@@ -747,15 +747,15 @@ resource "aws_secretsmanager_secret_version" "aurora_db_password" {
 }
 
 resource "aws_rds_cluster" "tf_aurora_pg" {
-  cluster_identifier = "burrow-aurora-tf"
-  engine             = "aurora-postgresql"
-  engine_version     = "17.4"
-  engine_mode        = "provisioned"
-  database_name      = "burrowdb"
-  master_username    = "burrow_admin"
-  master_password    = random_password.tf_aurora_master_password.result
-  storage_encrypted  = true
-  skip_final_snapshot= true
+  cluster_identifier  = "burrow-aurora-tf"
+  engine              = "aurora-postgresql"
+  engine_version      = "17.4"
+  engine_mode         = "provisioned"
+  database_name       = "burrowdb"
+  master_username     = "burrow_admin"
+  master_password     = random_password.tf_aurora_master_password.result
+  storage_encrypted   = true
+  skip_final_snapshot = true
 
   db_subnet_group_name   = aws_db_subnet_group.tf_aurora_subnets.name
   vpc_security_group_ids = [aws_security_group.tf_aurora_sg.id]
@@ -871,7 +871,7 @@ resource "aws_ecs_task_definition" "query_api" {
   container_definitions = jsonencode([
     {
       name      = "query-api"
-      image     = "docker.io/burrowai/query-api:main"
+      image     = "docker.io/burrowai/query-api:JWT"
       essential = true
       portMappings = [
         {
@@ -902,6 +902,10 @@ resource "aws_ecs_task_definition" "query_api" {
         {
           name      = "DB_PASSWORD"
           valueFrom = aws_secretsmanager_secret.aurora_db_password.arn
+        },
+        {
+          name      = "API_TOKEN"                                   # env var name inside container
+          valueFrom = aws_secretsmanager_secret.query_api_token.arn # the secret we just created
         }
       ]
       logConfiguration = {
@@ -951,4 +955,28 @@ resource "aws_vpc_security_group_ingress_rule" "tf_aurora_from_query" {
   from_port                    = 5432
   to_port                      = 5432
   ip_protocol                  = "tcp"
+}
+
+#ZACH Created random password for Query Api token
+resource "random_password" "query_api_token" {
+  length           = 32
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+#ZACH Created secret for Query Api token
+resource "aws_secretsmanager_secret" "query_api_token" {
+  name                    = "ragline/query-api-token"
+  description             = "API token for query-service"
+  recovery_window_in_days = 0
+
+  tags = {
+    Name = "ragline-query-api-token"
+  }
+}
+
+#ZACH Stored token in the secret
+resource "aws_secretsmanager_secret_version" "query_api_token" {
+  secret_id     = aws_secretsmanager_secret.query_api_token.id
+  secret_string = random_password.query_api_token.result
 }
