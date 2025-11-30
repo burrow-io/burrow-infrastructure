@@ -615,7 +615,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:main"
+      image     = "docker.io/burrowai/ingestion-task:DELETE"
       essential = true
       portMappings = [
         {
@@ -645,6 +645,10 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
         {
           name  = "ALB_BASE_URL"
           value = "http://${aws_lb.burrow.dns_name}"
+        },
+        {
+          name  = "WORKER_MODE"
+          value = "INGEST"
         }
       ]
 
@@ -979,4 +983,153 @@ resource "aws_secretsmanager_secret" "query_api_token" {
 resource "aws_secretsmanager_secret_version" "query_api_token" {
   secret_id     = aws_secretsmanager_secret.query_api_token.id
   secret_string = random_password.query_api_token.result
+}
+
+
+#-------- ADDING STUFF FOR DELETE EVENT -------
+
+# Cloud watch log group for delete tasks
+resource "aws_cloudwatch_log_group" "delete_terraform" {
+  name              = "/ecs/delete-terraform"
+  retention_in_days = 7
+
+  tags = {
+    Name = "delete-terraform-logs"
+  }
+}
+
+# Delete ECS task task definition
+resource "aws_ecs_task_definition" "delete_terraform" {
+  family                   = "delete-terraform"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 2048
+  memory                   = 5120
+
+  container_definitions = jsonencode([
+    {
+      name      = "delete-container"
+      image     = "docker.io/burrowai/ingestion-task:DELETE"
+      essential = true
+      portMappings = [
+        {
+          containerPort = 80
+          protocol      = "tcp"
+          appProtocol   = "http"
+        }
+      ]
+
+      environment = [
+        {
+          name  = "DB_HOST"
+          value = aws_rds_cluster.tf_aurora_pg.endpoint
+        },
+        {
+          name  = "DB_PORT"
+          value = "5432"
+        },
+        {
+          name  = "DB_NAME"
+          value = "burrowdb"
+        },
+        {
+          name  = "DB_USER"
+          value = "burrow_admin"
+        },
+        {
+          name  = "WORKER_MODE"
+          value = "DELETE"
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "DB_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.aurora_db_password.arn
+        },
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.delete_terraform.name
+          "awslogs-create-group"  = "true"
+          "awslogs-region"        = "us-east-1"
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+    }
+  ])
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
+  task_role_arn      = aws_iam_role.ingestion_task_role.arn
+  execution_role_arn = aws_iam_role.ecs_execution_role.arn
+}
+
+# Event bridge rule for S3 Object Delete
+resource "aws_cloudwatch_event_rule" "s3_object_deleted_rule" {
+  name           = "s3-object-deleted-rule"
+  description    = "Rule to capture S3 object deletion events"
+  event_bus_name = "default"
+
+  event_pattern = jsonencode({
+    source      = ["aws.s3"]
+    detail-type = ["Object Deleted"]
+    detail = {
+      bucket = {
+        name = [aws_s3_bucket.bucket.id]
+      }
+    }
+  })
+}
+
+# Connect Delete Rule to Delete ECS Task
+resource "aws_cloudwatch_event_target" "delete_ecs_task_target" {
+  rule      = aws_cloudwatch_event_rule.s3_object_deleted_rule.name
+  target_id = "TriggerDeleteECSTask"
+  arn       = aws_ecs_cluster.management-api-cluster.arn
+  role_arn  = aws_iam_role.eventbridge_ecs_role.arn
+
+  ecs_target {
+    task_count          = 1
+    task_definition_arn = aws_ecs_task_definition.delete_terraform.arn
+    launch_type         = "FARGATE"
+    platform_version    = "LATEST"
+
+    network_configuration {
+      subnets          = [var.private_subnet_1_id, var.private_subnet_2_id]
+      assign_public_ip = false
+      security_groups  = [aws_security_group.ingestion_task_sg.id]
+    }
+  }
+
+  input_transformer {
+    input_paths = {
+      detail_bucket_name = "$.detail.bucket.name"
+      detail_object_key  = "$.detail.object.key"
+    }
+    input_template = <<-EOT
+{
+  "containerOverrides": [
+    {
+      "name": "delete-container",
+      "environment": [
+        {
+          "name": "S3_BUCKET_NAME",
+          "value": "<detail_bucket_name>"
+        },
+        {
+          "name": "S3_OBJECT_KEY",
+          "value": "<detail_object_key>"
+        }
+      ]
+    }
+  ]
+}
+EOT
+  }
 }
