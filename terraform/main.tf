@@ -262,7 +262,8 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
         Effect = "Allow"
         Action = [
           "s3:PutObject",
-          "s3:PutObjectAcl"
+          "s3:PutObjectAcl",
+          "s3:DeleteObject"
         ]
         Resource = "${aws_s3_bucket.bucket.arn}/*"
       },
@@ -272,6 +273,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
           "dynamodb:Query",
           "dynamodb:Scan"
         ]
@@ -533,6 +535,7 @@ resource "aws_cloudwatch_event_target" "ecs_task_target" {
     input_paths = {
       detail_bucket_name = "$.detail.bucket.name"
       detail_object_key  = "$.detail.object.key"
+      detail_event_name  = "$.detail-type"
     }
     input_template = <<-EOT
 {
@@ -547,6 +550,77 @@ resource "aws_cloudwatch_event_target" "ecs_task_target" {
         {
           "name": "S3_OBJECT_KEY",
           "value": "<detail_object_key>"
+        },
+        {
+          "name": "EVENT_TYPE",
+          "value": "<detail_event_name>"
+        }
+      ]
+    }
+  ]
+}
+EOT
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "s3_object_deleted_rule" {
+  name           = "s3-object-deleted-rule"
+  description    = "Rule to capture S3 object deletion events"
+  event_bus_name = "default"
+
+  event_pattern = jsonencode({
+    source      = ["aws.s3"]
+    detail-type = ["Object Deleted"]
+    detail = {
+      bucket = {
+        name = [aws_s3_bucket.bucket.id]
+      }
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "ecs_task_delete_target" {
+  rule      = aws_cloudwatch_event_rule.s3_object_deleted_rule.name
+  target_id = "TriggerECSTaskDelete"
+  arn       = aws_ecs_cluster.management-api-cluster.arn
+  role_arn  = aws_iam_role.eventbridge_ecs_role.arn
+
+  ecs_target {
+    task_count          = 1
+    task_definition_arn = aws_ecs_task_definition.ingestion-terraform.arn
+    launch_type         = "FARGATE"
+    platform_version    = "LATEST"
+
+    network_configuration {
+      subnets          = [var.private_subnet_1_id, var.private_subnet_2_id]
+      assign_public_ip = false
+      security_groups  = [aws_security_group.ingestion_task_sg.id]
+    }
+  }
+
+  input_transformer {
+    input_paths = {
+      detail_bucket_name = "$.detail.bucket.name"
+      detail_object_key  = "$.detail.object.key"
+      detail_event_name  = "$.detail-type"
+    }
+    input_template = <<-EOT
+{
+  "containerOverrides": [
+    {
+      "name": "ingestion-container",
+      "environment": [
+        {
+          "name": "S3_BUCKET_NAME",
+          "value": "<detail_bucket_name>"
+        },
+        {
+          "name": "S3_OBJECT_KEY",
+          "value": "<detail_object_key>"
+        },
+        {
+          "name": "EVENT_TYPE",
+          "value": "<detail_event_name>"
         }
       ]
     }
@@ -871,7 +945,7 @@ resource "aws_ecs_task_definition" "query_api" {
   container_definitions = jsonencode([
     {
       name      = "query-api"
-      image     = "docker.io/burrowai/query-api:JWT"
+      image     = "docker.io/burrowai/query-api:main"
       essential = true
       portMappings = [
         {
