@@ -81,17 +81,6 @@ resource "aws_lb_target_group" "management_api" {
   }
 }
 
-resource "aws_lb_listener" "front_end" {
-  load_balancer_arn = aws_lb.burrow.arn
-  port              = "80"
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.management_api.arn
-  }
-}
-
 resource "aws_dynamodb_table" "documents-table" {
   name         = "documents-terraform"
   billing_mode = "PAY_PER_REQUEST"
@@ -125,8 +114,6 @@ resource "aws_dynamodb_table" "documents-table" {
   }
 }
 
-
-
 resource "aws_dynamodb_table" "users-table" {
   name         = "users-terraform"
   billing_mode = "PAY_PER_REQUEST"
@@ -144,7 +131,6 @@ resource "aws_dynamodb_table" "users-table" {
   }
 }
 
-
 resource "aws_ecs_cluster" "management-api-cluster" {
   name = "burrow-cluster"
 
@@ -153,7 +139,6 @@ resource "aws_ecs_cluster" "management-api-cluster" {
     value = "enabled"
   }
 }
-
 
 resource "aws_ecs_task_definition" "management-api" {
   family                   = "management-api"
@@ -220,7 +205,6 @@ resource "aws_ecs_task_definition" "management-api" {
     }
   ])
 
-
   runtime_platform {
     operating_system_family = "LINUX"
     cpu_architecture        = "ARM64"
@@ -278,8 +262,8 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "dynamodb:Scan"
         ]
         Resource = [
-          "arn:aws:dynamodb:us-east-1:908860991626:table/documents*",
-          "arn:aws:dynamodb:us-east-1:908860991626:table/users*",
+          aws_dynamodb_table.documents-table.arn,
+          aws_dynamodb_table.users-table.arn
         ]
       }
     ]
@@ -460,7 +444,6 @@ resource "aws_secretsmanager_secret_version" "ingestion-api-token" {
   secret_string = random_password.ingestion-api-token.result
 }
 
-
 resource "aws_ecs_service" "management-api-service" {
   name            = "management-api-service"
   cluster         = aws_ecs_cluster.management-api-cluster.id
@@ -494,7 +477,6 @@ resource "aws_s3_bucket_notification" "bucket_notification" {
 resource "random_id" "s3-bucket-suffix" {
   byte_length = 4
 }
-
 
 resource "aws_cloudwatch_event_rule" "s3_object_created_rule" {
   name           = "s3-object-created-rule"
@@ -886,22 +868,6 @@ resource "aws_lb_target_group" "query_api" {
   }
 }
 
-resource "aws_lb_listener_rule" "query_api_rule" {
-  listener_arn = aws_lb_listener.front_end.arn
-  priority     = 10
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.query_api.arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/query-service/*"]
-    }
-  }
-}
-
 resource "aws_security_group" "query_service" {
   name        = "query-service-sg"
   description = "Security group for query ECS service"
@@ -1054,3 +1020,238 @@ resource "aws_secretsmanager_secret_version" "query_api_token" {
   secret_id     = aws_secretsmanager_secret.query_api_token.id
   secret_string = random_password.query_api_token.result
 }
+
+#------ZACH Adding stuff for S3 frontend-------
+
+# Created a suffix for bucket so it's unique
+resource "random_id" "frontend_suffix" {
+  byte_length = 4
+}
+
+# Created S3 bucket
+resource "aws_s3_bucket" "frontend" {
+  bucket        = "burrow-frontend-${random_id.frontend_suffix.hex}"
+  force_destroy = true
+
+  tags = {
+    Name = "burrow-frontend"
+  }
+}
+
+# Block all public access on S3 bucket
+resource "aws_s3_bucket_public_access_block" "frontend" {
+  bucket                  = aws_s3_bucket.frontend.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Created CloudFront OAC
+resource "aws_cloudfront_origin_access_control" "frontend_oac" {
+  name                              = "burrow-frontend-oac"
+  description                       = "OAC for burrow frontend S3 origin"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# Created CloudFront distribution
+resource "aws_cloudfront_distribution" "burrow" {
+  enabled             = true
+  default_root_object = "index.html"
+
+  # S3 origin (frontend)
+  origin {
+    domain_name = "${aws_s3_bucket.frontend.bucket}.s3.${var.region}.amazonaws.com"
+    origin_id   = "s3-frontend-origin"
+
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend_oac.id
+  }
+
+  # ALB origin (APIs)
+  origin {
+    domain_name = aws_lb.burrow.dns_name
+    origin_id   = "alb-origin"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "s3-frontend-origin"
+    viewer_protocol_policy = "allow-all"
+
+    allowed_methods = ["GET", "HEAD"]
+    cached_methods  = ["GET", "HEAD"]
+
+    # CachingOptimized(managed aws policy)
+    cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/api/*"
+    target_origin_id       = "alb-origin"
+    viewer_protocol_policy = "allow-all"
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods  = ["GET", "HEAD"]
+
+    # CachingDisabled(managed aws policy)
+    cache_policy_id = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+
+    # AllViewer(managed aws policy)
+    origin_request_policy_id = "216adef6-5c7f-47e4-b989-5492eafa07d3"
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/query-service/*"
+    target_origin_id       = "alb-origin"
+    viewer_protocol_policy = "allow-all"
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods  = ["GET", "HEAD"]
+
+    # CachingDisabled(managed aws policy)
+    cache_policy_id = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+
+    # AllViewer(managed aws policy)
+    origin_request_policy_id = "216adef6-5c7f-47e4-b989-5492eafa07d3"
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "whitelist"
+      locations        = ["US", "CA"]
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = {
+    Name = "burrow-cloudfront"
+  }
+}
+
+# Created bucket policy to only allow CloudFront
+resource "aws_s3_bucket_policy" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowCloudFrontRead"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = [
+          "${aws_s3_bucket.frontend.arn}/*"
+        ]
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.burrow.arn
+          }
+        }
+      }
+    ]
+  })
+}
+
+# Updated ALB listener to have a fixed 404 default
+resource "aws_lb_listener" "front_end" {
+  load_balancer_arn = aws_lb.burrow.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Not Found"
+      status_code  = "404"
+    }
+  }
+}
+
+# Created Listener Rule for management-api
+resource "aws_lb_listener_rule" "management_api_rule" {
+  listener_arn = aws_lb_listener.front_end.arn
+  priority     = 5
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.management_api.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
+    }
+  }
+}
+
+# Created Listener Rule for query-api
+resource "aws_lb_listener_rule" "query_api_rule" {
+  listener_arn = aws_lb_listener.front_end.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.query_api.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/query-service/*"]
+    }
+  }
+}
+
+#--------Copying Dist to bucket on apply--------
+locals {
+  frontend_dir   = "${path.module}/dist"
+  frontend_files = fileset(local.frontend_dir, "**")
+
+  mime_types = {
+    html = "text/html"
+    js   = "text/javascript"
+    css  = "text/css"
+    svg  = "image/svg+xml"
+    json = "application/json"
+    png  = "image/png"
+    jpg  = "image/jpeg"
+    jpeg = "image/jpeg"
+    ico  = "image/x-icon"
+    map  = "application/json"
+  }
+}
+
+resource "aws_s3_object" "frontend_files" {
+  for_each = local.frontend_files
+
+  bucket = aws_s3_bucket.frontend.bucket
+  key    = each.value
+  source = "${local.frontend_dir}/${each.value}"
+  etag   = filemd5("${local.frontend_dir}/${each.value}")
+
+  # Grab the file extension and look up the content-type
+  content_type = lookup(
+    local.mime_types,
+    # take the last segment after the dot: e.g. "index.html" -> "html"
+    element(split(".", each.value), length(split(".", each.value)) - 1),
+    "binary/octet-stream"
+  )
+}
+
