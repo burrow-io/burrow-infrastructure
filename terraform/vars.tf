@@ -22,3 +22,8 @@ variable "private_subnet_2_id" {
   description = "ID of the az2 private subnet"
   type        = string
 }
+
+variable "region" {
+  description = "AWS region for resources"
+  type        = string
+}

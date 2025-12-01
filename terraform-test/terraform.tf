@@ -1,13 +1,6 @@
 terraform {
   required_version = ">= 1.0"
-
-  backend "s3" {
-    # bucket  = "burrow-terraform-state-us-east-1-12345"
-    # key     = "burrow/terraform-main.tfstate"
-    # region  = "us-east-1"
-    # encrypt = true
-  }
-
+  
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -21,5 +14,5 @@ terraform {
 }
 
 provider "aws" {
-  region = var.region
+  region = "us-east-1"
 }

@@ -980,3 +980,21 @@ resource "aws_secretsmanager_secret_version" "query_api_token" {
   secret_id     = aws_secretsmanager_secret.query_api_token.id
   secret_string = random_password.query_api_token.result
 }
+
+output "admin-password" {
+  description = "Admin password for ragline application"
+  value       = random_password.admin-password.result
+  sensitive   = true
+}
+
+output "ingestion-api-token" {
+  description = "API token for ingestion service"
+  value       = random_password.ingestion-api-token.result
+  sensitive   = true
+}
+
+output "query-api-token" {
+  description = "API token for query service"
+  value       = random_password.query_api_token.result
+  sensitive   = true
+}
