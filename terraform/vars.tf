@@ -28,3 +28,4 @@ variable "region" {
   description = "AWS region for this infrastructure"
   type        = string
 }
+

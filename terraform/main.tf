@@ -1220,6 +1220,20 @@ resource "aws_lb_listener_rule" "query_api_rule" {
   }
 }
 
+output "admin-password" {
+  description = "Admin password for ragline application"
+  value       = random_password.admin-password.result
+  sensitive   = true
+}
+
+
+output "query-api-token" {
+  description = "API token for query service"
+  value       = random_password.query_api_token.result
+  sensitive   = true
+}
+
+
 #--------Copying Dist to bucket on apply--------
 locals {
   frontend_dir   = "${path.module}/dist"
