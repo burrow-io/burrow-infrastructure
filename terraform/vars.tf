@@ -22,3 +22,9 @@ variable "private_subnet_2_id" {
   description = "ID of the az2 private subnet"
   type        = string
 }
+
+# Adding region variable
+variable "region" {
+  description = "AWS region for this infrastructure"
+  type        = string
+}

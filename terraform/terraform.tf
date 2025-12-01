@@ -20,7 +20,7 @@ terraform {
   }
 }
 
+# Updates this to be a variable
 provider "aws" {
-  region = "us-east-1"
+  region = var.region
 }
-
