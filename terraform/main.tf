@@ -263,7 +263,8 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
         ]
         Resource = [
           aws_dynamodb_table.documents-table.arn,
-          aws_dynamodb_table.users-table.arn
+          "${aws_dynamodb_table.documents-table.arn}/index/*",
+          aws_dynamodb_table.users-table.arn,
         ]
       }
     ]
