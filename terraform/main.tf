@@ -152,6 +152,11 @@ resource "aws_ecs_cluster" "management-api-cluster" {
     name  = "containerInsights"
     value = "enabled"
   }
+
+  depends_on = [
+    aws_ecs_service.management-api-service,
+    aws_ecs_service.query_api_service
+  ]
 }
 
 
@@ -276,8 +281,9 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "dynamodb:Scan"
         ]
         Resource = [
-          "arn:aws:dynamodb:us-east-1:908860991626:table/documents*",
-          "arn:aws:dynamodb:us-east-1:908860991626:table/users*",
+          aws_dynamodb_table.documents-table.arn,
+          "${aws_dynamodb_table.documents-table.arn}/index/status-createdAt-index",
+          aws_dynamodb_table.users-table.arn,
         ]
       }
     ]
@@ -508,6 +514,10 @@ resource "aws_cloudwatch_event_rule" "s3_object_created_rule" {
       }
     }
   })
+
+  depends_on = [
+    aws_cloudwatch_event_target.ecs_task_target
+  ]
 }
 
 resource "aws_cloudwatch_event_target" "ecs_task_target" {
@@ -987,11 +997,7 @@ output "admin-password" {
   sensitive   = true
 }
 
-output "ingestion-api-token" {
-  description = "API token for ingestion service"
-  value       = random_password.ingestion-api-token.result
-  sensitive   = true
-}
+
 
 output "query-api-token" {
   description = "API token for query service"
