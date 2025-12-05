@@ -400,6 +400,12 @@ resource "random_password" "ingestion-api-token" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
+resource "random_password" "pipeline-api-token" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
 resource "aws_secretsmanager_secret" "admin-password" {
   name                    = "ragline/admin-password"
   description             = "Admin password for ragline application"
@@ -1117,7 +1123,7 @@ resource "aws_cloudfront_distribution" "burrow" {
   ordered_cache_behavior {
     path_pattern           = "/api/*"
     target_origin_id       = "alb-origin"
-    viewer_protocol_policy = "redirect-to-https" 
+    viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods  = ["GET", "HEAD"]
@@ -1246,10 +1252,15 @@ output "admin-password" {
   sensitive   = true
 }
 
-
 output "query-api-token" {
   description = "API token for query service"
   value       = random_password.query_api_token.result
+  sensitive   = true
+}
+
+output "pipeline-api-token" {
+  description = "API token for using management API programmatically"
+  value       = random_password.pipeline-api-token.result
   sensitive   = true
 }
 
