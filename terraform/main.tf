@@ -692,7 +692,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:main"
+      image     = "docker.io/burrowai/ingestion-task:LOG"
       essential = true
       portMappings = [
         {
@@ -1117,7 +1117,7 @@ resource "aws_cloudfront_distribution" "burrow" {
   ordered_cache_behavior {
     path_pattern           = "/api/*"
     target_origin_id       = "alb-origin"
-    viewer_protocol_policy = "allow-all"
+    viewer_protocol_policy = "redirect-to-https" 
 
     allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods  = ["GET", "HEAD"]
@@ -1132,7 +1132,7 @@ resource "aws_cloudfront_distribution" "burrow" {
   ordered_cache_behavior {
     path_pattern           = "/query-service/*"
     target_origin_id       = "alb-origin"
-    viewer_protocol_policy = "allow-all"
+    viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods  = ["GET", "HEAD"]
