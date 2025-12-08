@@ -713,7 +713,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
           valueFrom = aws_secretsmanager_secret.ingestion-api-token.arn
         },
         {
-          name      = "ORIGIN_VERIFY"
+          name      = "ORIGIN_VERIFY_TOKEN"
           valueFrom = aws_secretsmanager_secret.origin_verify.arn
         }
       ]
@@ -1072,7 +1072,7 @@ resource "aws_cloudfront_distribution" "burrow" {
       origin_ssl_protocols   = ["TLSv1.2"]
     }
 
-    origin_custom_header {
+    custom_header {
       name  = "X-Origin-Verify"
       value = random_password.origin_verify_secret.result
     }
@@ -1303,7 +1303,7 @@ resource "aws_iam_role_policy" "eventbridge_dlq_lambda_all" {
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = [ 
+        Resource = [
           aws_secretsmanager_secret.origin_verify.arn,
           aws_secretsmanager_secret.ingestion-api-token.arn
         ]
@@ -1330,7 +1330,7 @@ resource "aws_lambda_function" "eventbridge_dlq_handler" {
       ALB_BASE_URL            = "http://${aws_lb.burrow.dns_name}"
       DOCS_API_PATH           = "/api/documents"
       INGESTION_API_TOKEN_ARN = aws_secretsmanager_secret.ingestion-api-token.arn
-      ORIGIN_VERIFY_ARN       = aws_secretsmanager_secret.origin_verify.arn 
+      ORIGIN_VERIFY_ARN       = aws_secretsmanager_secret.origin_verify.arn
     }
   }
 
@@ -1433,25 +1433,17 @@ resource "aws_vpc_security_group_ingress_rule" "lb_from_cloudfront" {
   from_port         = 80
   to_port           = 80
   ip_protocol       = "tcp"
-  prefix_list_id = data.aws_ec2_managed_prefix_list.cloudfront.id
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
 }
 
-resource "aws_vpc_security_group_ingress_rule" "lb_from_ingestion_sg" {
-  security_group_id            = aws_security_group.lb_sg.id
-  referenced_security_group_id = aws_security_group.ingestion_task_sg.id
-  description                  = "Allow ingestion tasks to call ALB"
-  from_port                    = 80
-  to_port                      = 80
-  ip_protocol                  = "tcp"
-}
-
-resource "aws_vpc_security_group_ingress_rule" "lb_from_dlq_lambda_sg" {
-  security_group_id            = aws_security_group.lb_sg.id
-  referenced_security_group_id = aws_security_group.dlq_lambda_sg.id
-  description                  = "Allow DLQ Lambda to call ALB"
-  from_port                    = 80
-  to_port                      = 80
-  ip_protocol                  = "tcp"
+#unhard code later
+resource "aws_vpc_security_group_ingress_rule" "lb_allow_from_nat" {
+  security_group_id = aws_security_group.lb_sg.id
+  cidr_ipv4         = "100.29.33.21/32"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+  description       = "Allow NAT gateway public IP to reach ALB (HTTP)"
 }
 
 resource "aws_vpc_security_group_egress_rule" "lb_egress" {
