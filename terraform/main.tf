@@ -472,7 +472,7 @@ resource "aws_ecs_service" "management-api-service" {
 }
 
 resource "aws_s3_bucket" "bucket" {
-  bucket        = "rag-pipeline-documents-${lower(random_id.s3-bucket-suffix.id)}"
+  bucket        = "rag-pipeline-documents-${random_id.s3-bucket-suffix.hex}"
   force_destroy = true
 }
 
