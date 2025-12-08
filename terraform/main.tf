@@ -10,30 +10,6 @@ resource "aws_lb" "burrow" {
   }
 }
 
-resource "aws_security_group" "lb_sg" {
-  name        = "alb-security-group"
-  description = "Security group for Application Load Balancer"
-  vpc_id      = var.vpc_id
-
-  tags = {
-    Name = "alb-security-group"
-  }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "lb_http" {
-  security_group_id = aws_security_group.lb_sg.id
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = 80
-  ip_protocol       = "tcp"
-  to_port           = 80
-}
-
-resource "aws_vpc_security_group_egress_rule" "lb_egress" {
-  security_group_id = aws_security_group.lb_sg.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
 resource "aws_security_group" "ecs_service" {
   name        = "ecs-service-sg"
   description = "Security group for ECS service"
@@ -694,7 +670,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:LOG"
+      image     = "docker.io/burrowai/ingestion-task:ALBLOCK"
       essential = true
       portMappings = [
         {
@@ -735,6 +711,10 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
         {
           name      = "INGESTION_API_TOKEN"
           valueFrom = aws_secretsmanager_secret.ingestion-api-token.arn
+        },
+        {
+          name      = "ORIGIN_VERIFY_TOKEN"
+          valueFrom = aws_secretsmanager_secret.origin_verify.arn
         }
       ]
 
@@ -1091,6 +1071,11 @@ resource "aws_cloudfront_distribution" "burrow" {
       origin_protocol_policy = "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
+
+    custom_header {
+      name  = "X-Origin-Verify"
+      value = random_password.origin_verify_secret.result
+    }
   }
 
   default_cache_behavior {
@@ -1176,54 +1161,6 @@ resource "aws_s3_bucket_policy" "frontend" {
       }
     ]
   })
-}
-
-resource "aws_lb_listener" "front_end" {
-  load_balancer_arn = aws_lb.burrow.arn
-  port              = "80"
-  protocol          = "HTTP"
-
-  default_action {
-    type = "fixed-response"
-
-    fixed_response {
-      content_type = "text/plain"
-      message_body = "Not Found"
-      status_code  = "404"
-    }
-  }
-}
-
-resource "aws_lb_listener_rule" "management_api_rule" {
-  listener_arn = aws_lb_listener.front_end.arn
-  priority     = 5
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.management_api.arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/api/*"]
-    }
-  }
-}
-
-resource "aws_lb_listener_rule" "query_api_rule" {
-  listener_arn = aws_lb_listener.front_end.arn
-  priority     = 10
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.query_api.arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/query-service/*"]
-    }
-  }
 }
 
 output "admin-password" {
@@ -1360,13 +1297,16 @@ resource "aws_iam_role_policy" "eventbridge_dlq_lambda_all" {
         Resource = aws_sqs_queue.eventbridge_dlq.arn
       },
       {
-        Sid    = "ReadIngestionApiToken"
+        Sid    = "ReadApiTokens"
         Effect = "Allow"
         Action = [
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = aws_secretsmanager_secret.ingestion-api-token.arn
+        Resource = [
+          aws_secretsmanager_secret.origin_verify.arn,
+          aws_secretsmanager_secret.ingestion-api-token.arn
+        ]
       }
     ]
   })
@@ -1390,7 +1330,13 @@ resource "aws_lambda_function" "eventbridge_dlq_handler" {
       ALB_BASE_URL            = "http://${aws_lb.burrow.dns_name}"
       DOCS_API_PATH           = "/api/documents"
       INGESTION_API_TOKEN_ARN = aws_secretsmanager_secret.ingestion-api-token.arn
+      ORIGIN_VERIFY_ARN       = aws_secretsmanager_secret.origin_verify.arn
     }
+  }
+
+  vpc_config {
+    subnet_ids         = [var.private_subnet_1_id, var.private_subnet_2_id]
+    security_group_ids = [aws_security_group.dlq_lambda_sg.id]
   }
 }
 
@@ -1430,7 +1376,6 @@ resource "aws_cloudwatch_event_target" "ecs_task_failed_to_sqs" {
   arn       = aws_sqs_queue.eventbridge_dlq.arn
 }
 
-#---------------------------------------
 resource "aws_secretsmanager_secret" "pipeline_api_token" {
   name                    = "ragline/pipeline-api-token"
   description             = "API token for pipeline-service"
@@ -1444,4 +1389,182 @@ resource "aws_secretsmanager_secret" "pipeline_api_token" {
 resource "aws_secretsmanager_secret_version" "pipeline_api_token_version" {
   secret_id     = aws_secretsmanager_secret.pipeline_api_token.id
   secret_string = random_password.pipeline-api-token.result
+}
+
+#----------------------------
+
+resource "random_password" "origin_verify_secret" {
+  length  = 32
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "origin_verify" {
+  name                    = "ragline/origin-verify"
+  description             = "Shared X-Origin-Verify header secret for CloudFront + internal services"
+  recovery_window_in_days = 0
+
+  tags = {
+    Name = "ragline-origin-verify"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "origin_verify" {
+  secret_id     = aws_secretsmanager_secret.origin_verify.id
+  secret_string = random_password.origin_verify_secret.result
+}
+
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+resource "aws_security_group" "lb_sg" {
+  name        = "alb-security-group"
+  description = "Security group for Application Load Balancer"
+  vpc_id      = var.vpc_id
+
+  tags = {
+    Name = "alb-security-group"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "lb_from_cloudfront" {
+  security_group_id = aws_security_group.lb_sg.id
+  description       = "Allow CloudFront origin-facing IPs to reach ALB (port 80)"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
+}
+
+#unhard code later
+resource "aws_vpc_security_group_ingress_rule" "lb_allow_from_nat" {
+  security_group_id = aws_security_group.lb_sg.id
+  cidr_ipv4         = "100.29.33.21/32"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+  description       = "Allow NAT gateway public IP to reach ALB (HTTP)"
+}
+
+resource "aws_vpc_security_group_egress_rule" "lb_egress" {
+  security_group_id = aws_security_group.lb_sg.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_security_group" "dlq_lambda_sg" {
+  name   = "dlq-lambda-sg"
+  vpc_id = var.vpc_id
+
+  tags = {
+    Name = "dlq-lambda-sg"
+  }
+}
+
+resource "aws_vpc_security_group_egress_rule" "dlq_lambda_egress" {
+  security_group_id = aws_security_group.dlq_lambda_sg.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_lb_listener" "front_end" {
+  load_balancer_arn = aws_lb.burrow.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Not Found"
+      status_code  = "404"
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "management_api_rule" {
+  listener_arn = aws_lb_listener.front_end.arn
+  priority     = 5
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.management_api.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
+    }
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-Origin-Verify"
+      values           = [random_password.origin_verify_secret.result]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "query_api_rule" {
+  listener_arn = aws_lb_listener.front_end.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.query_api.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/query-service/*"]
+    }
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-Origin-Verify"
+      values           = [random_password.origin_verify_secret.result]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "management_api_reject" {
+  listener_arn = aws_lb_listener.front_end.arn
+  priority     = 6
+
+  action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Forbidden"
+      status_code  = "403"
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "query_api_reject" {
+  listener_arn = aws_lb_listener.front_end.arn
+  priority     = 11
+
+  action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Forbidden"
+      status_code  = "403"
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = ["/query-service/*"]
+    }
+  }
 }
