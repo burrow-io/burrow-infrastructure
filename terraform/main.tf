@@ -670,7 +670,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:main"
+      image     = "docker.io/burrowai/ingestion-task:ALBLOCK"
       essential = true
       portMappings = [
         {
