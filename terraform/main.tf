@@ -445,6 +445,8 @@ resource "aws_ecs_service" "management-api-service" {
     assign_public_ip = false
     security_groups  = [aws_security_group.ecs_service.id]
   }
+
+  depends_on = [aws_nat_gateway.burrow_nat]
 }
 
 resource "aws_s3_bucket" "bucket" {
@@ -670,7 +672,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:ALBLOCK"
+      image     = "docker.io/burrowai/ingestion-task:main"
       essential = true
       portMappings = [
         {
@@ -947,8 +949,8 @@ resource "aws_ecs_task_definition" "query_api" {
           valueFrom = aws_secretsmanager_secret.aurora_db_password.arn
         },
         {
-          name      = "API_TOKEN"                                   # env var name inside container
-          valueFrom = aws_secretsmanager_secret.query_api_token.arn # the secret we just created
+          name      = "API_TOKEN"                                   
+          valueFrom = aws_secretsmanager_secret.query_api_token.arn 
         }
       ]
       logConfiguration = {
@@ -990,6 +992,8 @@ resource "aws_ecs_service" "query_api_service" {
     assign_public_ip = false
     security_groups  = [aws_security_group.query_service.id]
   }
+
+  depends_on = [aws_nat_gateway.burrow_nat]
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tf_aurora_from_query" {
@@ -1307,6 +1311,18 @@ resource "aws_iam_role_policy" "eventbridge_dlq_lambda_all" {
           aws_secretsmanager_secret.origin_verify.arn,
           aws_secretsmanager_secret.ingestion-api-token.arn
         ]
+      },
+      {
+        Sid    = "VpcAccess"
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface",
+          "ec2:AssignPrivateIpAddresses",
+          "ec2:UnassignPrivateIpAddresses"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -1391,8 +1407,6 @@ resource "aws_secretsmanager_secret_version" "pipeline_api_token_version" {
   secret_string = random_password.pipeline-api-token.result
 }
 
-#----------------------------
-
 resource "random_password" "origin_verify_secret" {
   length  = 32
   special = false
@@ -1436,14 +1450,13 @@ resource "aws_vpc_security_group_ingress_rule" "lb_from_cloudfront" {
   prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
 }
 
-#unhard code later
 resource "aws_vpc_security_group_ingress_rule" "lb_allow_from_nat" {
   security_group_id = aws_security_group.lb_sg.id
-  cidr_ipv4         = "100.29.33.21/32"
+  cidr_ipv4         = "${aws_eip.burrow_nat_eip.public_ip}/32"
   from_port         = 80
   to_port           = 80
   ip_protocol       = "tcp"
-  description       = "Allow NAT gateway public IP to reach ALB (HTTP)"
+  description       = "Allow NAT gateway public IP to reach ALB - ECS tasks in private subnets"
 }
 
 resource "aws_vpc_security_group_egress_rule" "lb_egress" {
@@ -1567,4 +1580,70 @@ resource "aws_lb_listener_rule" "query_api_reject" {
       values = ["/query-service/*"]
     }
   }
+}
+
+#------ADDING NAT STUFF--------
+
+resource "aws_internet_gateway" "burrow_igw" {
+  vpc_id = var.vpc_id
+  tags = {
+    Name = "burrow-igw"
+  }
+}
+
+resource "aws_eip" "burrow_nat_eip" {
+  domain = "vpc"
+  tags = {
+    Name = "burrow-nat-eip"
+  }
+}
+
+resource "aws_nat_gateway" "burrow_nat" {
+  allocation_id = aws_eip.burrow_nat_eip.id
+  subnet_id     = var.public_subnet_1_id
+  tags = {
+    Name = "burrow-nat-gateway"
+  }
+}
+
+resource "aws_route_table" "burrow_public_rt" {
+  vpc_id = var.vpc_id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.burrow_igw.id
+  }
+  tags = {
+    Name = "burrow-public-rt"
+  }
+}
+
+resource "aws_route_table" "burrow_private_rt" {
+  vpc_id = var.vpc_id
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.burrow_nat.id
+  }
+  tags = {
+    Name = "burrow-private-rt"
+  }
+}
+
+resource "aws_route_table_association" "public_subnet_1" {
+  subnet_id      = var.public_subnet_1_id
+  route_table_id = aws_route_table.burrow_public_rt.id
+}
+
+resource "aws_route_table_association" "public_subnet_2" {
+  subnet_id      = var.public_subnet_2_id
+  route_table_id = aws_route_table.burrow_public_rt.id
+}
+
+resource "aws_route_table_association" "private_subnet_1" {
+  subnet_id      = var.private_subnet_1_id
+  route_table_id = aws_route_table.burrow_private_rt.id
+}
+
+resource "aws_route_table_association" "private_subnet_2" {
+  subnet_id      = var.private_subnet_2_id
+  route_table_id = aws_route_table.burrow_private_rt.id
 }
