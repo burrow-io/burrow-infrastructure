@@ -1,1 +1,0 @@
-import{b as t}from"./ViewLayoutSection.vue-C-bfDxQP.js";import{d as o,f as r,b as s,S as a,Z as c}from"./index-gMm2el0C.js";const m=o({__name:"CollectionScripts",setup(n){return(i,e)=>(s(),r(t,null,{title:a(()=>[...e[0]||(e[0]=[c("Scripts",-1)])]),_:1}))}});export{m as default};

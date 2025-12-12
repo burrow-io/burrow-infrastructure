@@ -125,7 +125,7 @@ resource "aws_ecs_task_definition" "management-api" {
   container_definitions = jsonencode([
     {
       name  = "management-api"
-      image = "docker.io/burrowai/management-api:main"
+      image = "docker.io/burrowai/management-api:swagger-docs"
       portMappings = [
         {
           containerPort = 3000
