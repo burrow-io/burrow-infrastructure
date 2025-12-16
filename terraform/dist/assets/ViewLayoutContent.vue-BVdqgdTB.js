@@ -1,0 +1,1 @@
+import{ah as e,c as l,b as o,al as t}from"./index-D7a02O2S.js";const s={},c={class:"custom-scroll flex flex-col pr-0 *:border-t *:first:border-t-0 xl:flex-row *:xl:border-t-0 *:xl:border-l *:first:xl:border-l-0"};function n(r,a){return o(),l("div",c,[t(r.$slots,"default")])}const f=e(s,[["render",n]]);export{f as x};

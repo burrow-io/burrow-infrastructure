@@ -1,1 +1,0 @@
-import{b as o}from"./ViewLayoutSection.vue-COiv4Cec.js";import{d as t,f as a,b as s,S as l,Z as n}from"./index-6FRNjKLB.js";const p=t({__name:"CollectionCookies",setup(r){return(i,e)=>(s(),a(o,null,{title:l(()=>[...e[0]||(e[0]=[n("Cookies",-1)])]),_:1}))}});export{p as default};

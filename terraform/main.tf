@@ -84,6 +84,11 @@ resource "aws_dynamodb_table" "documents-table" {
     projection_type = "ALL"
   }
 
+  ttl {
+    enabled        = true
+    attribute_name = "purgeAt"
+  }
+
   tags = {
     Name        = "dynamodb-table-1"
     Environment = "production"
@@ -125,7 +130,7 @@ resource "aws_ecs_task_definition" "management-api" {
   container_definitions = jsonencode([
     {
       name  = "management-api"
-      image = "docker.io/burrowai/management-api:swagger-docs"
+      image = "docker.io/burrowai/management-api:RESOURCETAG"
       portMappings = [
         {
           containerPort = 3000
@@ -221,8 +226,12 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
       {
         Effect = "Allow"
         Action = [
+          "s3:GetObject",
           "s3:PutObject",
           "s3:PutObjectAcl",
+          "s3:PutObjectTagging",
+          "s3:GetObjectTagging",
+          "s3:CopyObject",
           "s3:DeleteObject"
         ]
         Resource = "${aws_s3_bucket.bucket.arn}/*"
@@ -280,6 +289,7 @@ resource "aws_iam_role_policy" "ingestion_task_policy" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
+          "s3:GetObjectTagging",
           "s3:ListBucket"
         ]
         Resource = [
@@ -475,6 +485,11 @@ resource "aws_cloudwatch_event_rule" "s3_object_created_rule" {
       bucket = {
         name = [aws_s3_bucket.bucket.id]
       }
+      object = {
+        key = [{
+          anything-but = { prefix = "deleted/" }
+        }]
+      }
     }
   })
 }
@@ -538,14 +553,14 @@ EOT
   }
 }
 
-resource "aws_cloudwatch_event_rule" "s3_object_deleted_rule" {
-  name           = "s3-object-deleted-rule"
-  description    = "Rule to capture S3 object deletion events"
+resource "aws_cloudwatch_event_rule" "s3_object_tags_added_rule" {
+  name           = "s3-object-tags-added-rule"
+  description    = "Rule to capture S3 object tagging events for deletion workflow"
   event_bus_name = "default"
 
   event_pattern = jsonencode({
     source      = ["aws.s3"]
-    detail-type = ["Object Deleted"]
+    detail-type = ["Object Tags Added"]
     detail = {
       bucket = {
         name = [aws_s3_bucket.bucket.id]
@@ -555,7 +570,7 @@ resource "aws_cloudwatch_event_rule" "s3_object_deleted_rule" {
 }
 
 resource "aws_cloudwatch_event_target" "ecs_task_delete_target" {
-  rule      = aws_cloudwatch_event_rule.s3_object_deleted_rule.name
+  rule      = aws_cloudwatch_event_rule.s3_object_tags_added_rule.name
   target_id = "TriggerECSTaskDelete"
   arn       = aws_ecs_cluster.management-api-cluster.arn
   role_arn  = aws_iam_role.eventbridge_ecs_role.arn
@@ -672,7 +687,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:main"
+      image     = "docker.io/burrowai/ingestion-task:RESOURCETAG"
       essential = true
       portMappings = [
         {
@@ -949,8 +964,8 @@ resource "aws_ecs_task_definition" "query_api" {
           valueFrom = aws_secretsmanager_secret.aurora_db_password.arn
         },
         {
-          name      = "API_TOKEN"                                   
-          valueFrom = aws_secretsmanager_secret.query_api_token.arn 
+          name      = "API_TOKEN"
+          valueFrom = aws_secretsmanager_secret.query_api_token.arn
         }
       ]
       logConfiguration = {
@@ -1646,4 +1661,21 @@ resource "aws_route_table_association" "private_subnet_1" {
 resource "aws_route_table_association" "private_subnet_2" {
   subnet_id      = var.private_subnet_2_id
   route_table_id = aws_route_table.burrow_private_rt.id
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "deleted_documents" {
+  bucket = aws_s3_bucket.bucket.id
+
+  rule {
+    id     = "expire-deleted-documents"
+    status = "Enabled"
+
+    filter {
+      prefix = "deleted/"
+    }
+
+    expiration {
+      days = 90
+    }
+  }
 }
