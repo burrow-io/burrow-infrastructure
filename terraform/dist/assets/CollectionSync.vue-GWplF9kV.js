@@ -1,1 +1,0 @@
-import{b as t}from"./ViewLayoutSection.vue-vG1nOkC2.js";import{d as o,f as a,b as n,S as l,Z as r}from"./index-D7a02O2S.js";const p=o({__name:"CollectionSync",setup(c){return(s,e)=>(n(),a(t,null,{title:l(()=>[...e[0]||(e[0]=[r("Sync",-1)])]),_:1}))}});export{p as default};
