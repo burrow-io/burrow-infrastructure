@@ -386,19 +386,13 @@ resource "random_password" "ingestion-api-token" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
-resource "random_password" "pipeline-api-token" {
-  length           = 16
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
-}
-
 resource "aws_secretsmanager_secret" "admin-password" {
-  name                    = "ragline/admin-password"
-  description             = "Admin password for ragline application"
+  name                    = "burrow/admin-password"
+  description             = "Admin password for burrow application"
   recovery_window_in_days = 0
 
   tags = {
-    Name = "ragline-admin-password"
+    Name = "burrow-admin-password"
   }
 }
 
@@ -408,12 +402,12 @@ resource "aws_secretsmanager_secret_version" "admin-password" {
 }
 
 resource "aws_secretsmanager_secret" "jwt-secret" {
-  name                    = "ragline/jwt-secret"
-  description             = "JWT secret key for ragline application"
+  name                    = "burrow/jwt-secret"
+  description             = "JWT secret key for burrow application"
   recovery_window_in_days = 0
 
   tags = {
-    Name = "ragline-jwt-secret"
+    Name = "burrow-jwt-secret"
   }
 }
 
@@ -423,12 +417,12 @@ resource "aws_secretsmanager_secret_version" "jwt-secret" {
 }
 
 resource "aws_secretsmanager_secret" "ingestion-api-token" {
-  name                    = "ragline/ingestion-api-token"
+  name                    = "burrow/ingestion-api-token"
   description             = "API token for ingestion service"
   recovery_window_in_days = 0
 
   tags = {
-    Name = "ragline-ingestion-api-token"
+    Name = "burrow-ingestion-api-token"
   }
 }
 
@@ -812,7 +806,7 @@ resource "random_password" "tf_aurora_master_password" {
 }
 
 resource "aws_secretsmanager_secret" "aurora_db_password" {
-  name                    = "ragline/aurora-db-password"
+  name                    = "burrow/aurora-db-password"
   description             = "Aurora DB password for burrowdb"
   recovery_window_in_days = 0
 }
@@ -1026,12 +1020,12 @@ resource "random_password" "query_api_token" {
 }
 
 resource "aws_secretsmanager_secret" "query_api_token" {
-  name                    = "ragline/query-api-token"
+  name                    = "burrow/query-api-token"
   description             = "API token for query-service"
   recovery_window_in_days = 0
 
   tags = {
-    Name = "ragline-query-api-token"
+    Name = "burrow-query-api-token"
   }
 }
 
@@ -1183,20 +1177,14 @@ resource "aws_s3_bucket_policy" "frontend" {
 }
 
 output "admin-password" {
-  description = "Admin password for ragline application"
+  description = "Admin password for burrow application"
   value       = random_password.admin-password.result
   sensitive   = true
 }
 
-output "query-api-token" {
+output "rag-api-token" {
   description = "API token for query service"
   value       = random_password.query_api_token.result
-  sensitive   = true
-}
-
-output "pipeline-api-token" {
-  description = "API token for using management API programmatically"
-  value       = random_password.pipeline-api-token.result
   sensitive   = true
 }
 
@@ -1407,33 +1395,18 @@ resource "aws_cloudwatch_event_target" "ecs_task_failed_to_sqs" {
   arn       = aws_sqs_queue.eventbridge_dlq.arn
 }
 
-resource "aws_secretsmanager_secret" "pipeline_api_token" {
-  name                    = "ragline/pipeline-api-token"
-  description             = "API token for pipeline-service"
-  recovery_window_in_days = 0
-
-  tags = {
-    Name = "ragline-pipeline-api-token"
-  }
-}
-
-resource "aws_secretsmanager_secret_version" "pipeline_api_token_version" {
-  secret_id     = aws_secretsmanager_secret.pipeline_api_token.id
-  secret_string = random_password.pipeline-api-token.result
-}
-
 resource "random_password" "origin_verify_secret" {
   length  = 32
   special = false
 }
 
 resource "aws_secretsmanager_secret" "origin_verify" {
-  name                    = "ragline/origin-verify"
+  name                    = "burrow/origin-verify"
   description             = "Shared X-Origin-Verify header secret for CloudFront + internal services"
   recovery_window_in_days = 0
 
   tags = {
-    Name = "ragline-origin-verify"
+    Name = "burrow-origin-verify"
   }
 }
 
