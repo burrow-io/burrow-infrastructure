@@ -130,7 +130,7 @@ resource "aws_ecs_task_definition" "management-api" {
   container_definitions = jsonencode([
     {
       name  = "management-api"
-      image = "docker.io/burrowai/management-api:RESOURCETAG"
+      image = "docker.io/burrowai/management-api:main"
       portMappings = [
         {
           containerPort = 3000
@@ -681,7 +681,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:RESOURCETAG"
+      image     = "docker.io/burrowai/ingestion-task:NOPGVEC"
       essential = true
       portMappings = [
         {
@@ -1197,6 +1197,7 @@ output "front-end-bucket" {
   description = "Bucket for the UI"
   value       = aws_s3_bucket.frontend.bucket
 }
+
 resource "aws_sqs_queue" "eventbridge_dlq" {
   name = "burrow-eventbridge-dlq"
 
@@ -1276,7 +1277,8 @@ resource "aws_iam_role_policy" "eventbridge_dlq_lambda_all" {
         ]
         Resource = [
           aws_secretsmanager_secret.origin_verify.arn,
-          aws_secretsmanager_secret.ingestion-api-token.arn
+          aws_secretsmanager_secret.ingestion-api-token.arn,
+          aws_secretsmanager_secret.aurora_db_password.arn
         ]
       },
       {
@@ -1615,4 +1617,47 @@ resource "aws_s3_bucket_lifecycle_configuration" "deleted_documents" {
       days = 90
     }
   }
+}
+
+# Lambda: pgvector initialization
+resource "aws_vpc_security_group_ingress_rule" "aurora_from_lambda" {
+  security_group_id            = aws_security_group.tf_aurora_sg.id
+  referenced_security_group_id = aws_security_group.dlq_lambda_sg.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_lambda_function" "init_pgvector" {
+  function_name = "burrow-init-pgvector"
+  role          = aws_iam_role.eventbridge_dlq_lambda_role.arn
+
+  runtime = "python3.12"
+  handler = "index.handler"
+
+  filename         = "../lambdas/init-pgvector/init-pgvector.zip"
+  source_code_hash = filebase64sha256("../lambdas/init-pgvector/init-pgvector.zip")
+
+  timeout     = 60
+  memory_size = 256
+
+  environment {
+    variables = {
+      DB_ENDPOINT            = aws_rds_cluster.tf_aurora_pg.endpoint
+      DB_NAME                = "burrowdb"
+      DB_USER                = "burrow_admin"
+      DB_PASSWORD_SECRET_ARN = aws_secretsmanager_secret.aurora_db_password.arn
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = [var.private_subnet_1_id, var.private_subnet_2_id]
+    security_group_ids = [aws_security_group.dlq_lambda_sg.id]
+  }
+}
+
+data "aws_lambda_invocation" "init_pgvector" {
+  function_name = aws_lambda_function.init_pgvector.function_name
+  input         = jsonencode({})
+  depends_on    = [aws_rds_cluster_instance.tf_aurora_pg_instance]
 }
