@@ -1198,30 +1198,6 @@ output "front-end-bucket" {
   value       = aws_s3_bucket.frontend.bucket
 }
 
-output "db-endpoint" {
-  description = "Aurora PostgreSQL cluster endpoint"
-  value       = aws_rds_cluster.tf_aurora_pg.endpoint
-  sensitive   = false
-}
-
-output "db-name" {
-  description = "Aurora PostgreSQL database name"
-  value       = aws_rds_cluster.tf_aurora_pg.database_name
-  sensitive   = false
-}
-
-output "db-user" {
-  description = "Aurora PostgreSQL master username"
-  value       = aws_rds_cluster.tf_aurora_pg.master_username
-  sensitive   = false
-}
-
-output "db-password-secret-arn" {
-  description = "ARN of the Secrets Manager secret containing Aurora DB password"
-  value       = aws_secretsmanager_secret.aurora_db_password.arn
-  sensitive   = false
-}
-
 resource "aws_sqs_queue" "eventbridge_dlq" {
   name = "burrow-eventbridge-dlq"
 
