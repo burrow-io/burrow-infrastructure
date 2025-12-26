@@ -130,7 +130,7 @@ resource "aws_ecs_task_definition" "management-api" {
   container_definitions = jsonencode([
     {
       name  = "management-api"
-      image = "docker.io/burrowai/management-api:main"
+      image = "docker.io/burrowai/management-api:FIREFOX"
       portMappings = [
         {
           containerPort = 3000
@@ -681,7 +681,7 @@ resource "aws_ecs_task_definition" "ingestion-terraform" {
   container_definitions = jsonencode([
     {
       name      = "ingestion-container"
-      image     = "docker.io/burrowai/ingestion-task:NOPGVEC"
+      image     = "docker.io/burrowai/ingestion-task:main"
       essential = true
       portMappings = [
         {
@@ -1201,7 +1201,8 @@ output "front-end-bucket" {
 resource "aws_sqs_queue" "eventbridge_dlq" {
   name = "burrow-eventbridge-dlq"
 
-  message_retention_seconds = 1209600
+  message_retention_seconds  = 1209600
+  visibility_timeout_seconds = 70  
 
   tags = {
     Name = "burrow-eventbridge-dlq"
@@ -1302,12 +1303,12 @@ resource "aws_lambda_function" "eventbridge_dlq_handler" {
   role          = aws_iam_role.eventbridge_dlq_lambda_role.arn
 
   runtime = "python3.12"
-  handler = "eventbridge_dlq_handler.handler"
+  handler = "index.handler"
 
-  filename         = "lambda/eventbridge_dlq_handler.zip"
-  source_code_hash = filebase64sha256("lambda/eventbridge_dlq_handler.zip")
+  filename         = "../lambdas/eventbridge-dlq/eventbridge-dlq.zip"
+  source_code_hash = filebase64sha256("../lambdas/eventbridge-dlq/eventbridge-dlq.zip")
 
-  timeout     = 30
+  timeout     = 60
   memory_size = 256
 
   environment {
@@ -1316,6 +1317,11 @@ resource "aws_lambda_function" "eventbridge_dlq_handler" {
       DOCS_API_PATH           = "/api/documents"
       INGESTION_API_TOKEN_ARN = aws_secretsmanager_secret.ingestion-api-token.arn
       ORIGIN_VERIFY_ARN       = aws_secretsmanager_secret.origin_verify.arn
+      DB_HOST                 = aws_rds_cluster.tf_aurora_pg.reader_endpoint
+      DB_PORT                 = "5432"
+      DB_NAME                 = "burrowdb"
+      DB_USER                 = "burrow_admin"
+      DB_PASSWORD_SECRET_ARN  = aws_secretsmanager_secret.aurora_db_password.arn
     }
   }
 
@@ -1328,7 +1334,7 @@ resource "aws_lambda_function" "eventbridge_dlq_handler" {
 resource "aws_lambda_event_source_mapping" "eventbridge_dlq_to_lambda" {
   event_source_arn = aws_sqs_queue.eventbridge_dlq.arn
   function_name    = aws_lambda_function.eventbridge_dlq_handler.arn
-  batch_size       = 10
+  batch_size       = 8
 }
 
 resource "aws_cloudwatch_event_rule" "ecs_task_failed_rule" {
@@ -1358,6 +1364,31 @@ resource "aws_cloudwatch_event_rule" "ecs_task_failed_rule" {
 resource "aws_cloudwatch_event_target" "ecs_task_failed_to_sqs" {
   rule      = aws_cloudwatch_event_rule.ecs_task_failed_rule.name
   target_id = "SendFailedIngestionTasksToSqs"
+  arn       = aws_sqs_queue.eventbridge_dlq.arn
+}
+
+resource "aws_cloudwatch_event_rule" "ecs_task_stopped_no_exit_rule" {
+  name           = "ecs-task-stopped-no-exit-rule"
+  description    = "Tasks that stopped before container started (provisioning failures)"
+  event_bus_name = "default"
+
+  event_pattern = jsonencode({
+    "source" : ["aws.ecs"],
+    "detail-type" : ["ECS Task State Change"],
+    "detail" : {
+      "clusterArn" : [aws_ecs_cluster.management-api-cluster.arn],
+      "group" : ["family:ingestion-terraform"],
+      "lastStatus" : ["STOPPED"],
+      "containers" : {
+        "exitCode" : [{ "exists" : false }]
+      }
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "ecs_task_stopped_no_exit_to_sqs" {
+  rule      = aws_cloudwatch_event_rule.ecs_task_stopped_no_exit_rule.name
+  target_id = "SendNoExitTasksToSqs"
   arn       = aws_sqs_queue.eventbridge_dlq.arn
 }
 
